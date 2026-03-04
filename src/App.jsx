@@ -236,8 +236,9 @@ export default function App() {
     if (!room || !myName) return
     if (room.phase === 'lobby')     { setScreen('lobby');    return }
     if (room.phase === 'nicknames') {
+    if (room.gm === myName) { setScreen('gm'); return }
       setScreen(room.nicknames?.[myName] ? 'waiting' : 'nickname')
-      return
+    return
     }
     if (room.phase === 'reading' || room.phase === 'game') {
       setScreen(room.gm === myName ? 'gm' : 'waiting')
