@@ -210,7 +210,26 @@ export default function App() {
   const [inputNick,  setInputNick]  = useState('')
   const [error,      setError]      = useState('')
   const [loading,    setLoading]    = useState(false)
+  const [showInactivityModal, setShowInactivityModal] = useState(false)
   const unsubRef = useRef(null)
+
+  // ── Exit room ──────────────────────────────────────────────────────────────
+  function exitRoom() {
+    if (unsubRef.current) unsubRef.current()
+    localStorage.removeItem('empire_name')
+    localStorage.removeItem('empire_code')
+    localStorage.removeItem('empire_isGM')
+    localStorage.removeItem('empire_hidden_at')
+    setRoom(null)
+    setMyName('')
+    setIsGM(false)
+    setInputName('')
+    setInputCode('')
+    setInputNick('')
+    setError('')
+    setShowInactivityModal(false)
+    setScreen('home')
+  }
 
   // ── Real-time listener ─────────────────────────────────────────────────────
   function subscribeToRoom(code) {
@@ -225,10 +244,28 @@ export default function App() {
 
   useEffect(() => () => unsubRef.current?.(), [])
   useEffect(() => {
-  const savedCode = localStorage.getItem('empire_code')
-  const savedName = localStorage.getItem('empire_name')
-  if (savedCode && savedName) subscribeToRoom(savedCode)
-}, [])
+    const savedCode = localStorage.getItem('empire_code')
+    const savedName = localStorage.getItem('empire_name')
+    if (savedCode && savedName) subscribeToRoom(savedCode)
+  }, [])
+
+  // ── Inactivity detection (30 min away triggers new-session prompt) ─────────
+  const INACTIVITY_MS = 30 * 60 * 1000
+  useEffect(() => {
+    function handleVisibility() {
+      if (document.hidden) {
+        localStorage.setItem('empire_hidden_at', Date.now().toString())
+      } else {
+        const hiddenAt = parseInt(localStorage.getItem('empire_hidden_at') || '0', 10)
+        localStorage.removeItem('empire_hidden_at')
+        if (hiddenAt && Date.now() - hiddenAt > INACTIVITY_MS) {
+          setShowInactivityModal(true)
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [])
 
 
   // ── Derive screen from room state ──────────────────────────────────────────
@@ -347,7 +384,33 @@ export default function App() {
       <GlobalStyle />
 
       {/* Header */}
-      <div style={{ textAlign: 'center', padding: '40px 20px 10px' }}>
+      <div style={{ position: 'relative', textAlign: 'center', padding: '40px 20px 10px' }}>
+        {screen !== 'home' && (
+          <button
+            onClick={exitRoom}
+            title="Exit room and return to Home"
+            style={{
+              position: 'absolute',
+              top: 20,
+              right: 18,
+              background: 'transparent',
+              border: `1px solid ${c.border}`,
+              borderRadius: 3,
+              color: c.silver,
+              fontFamily: "'Cinzel', serif",
+              fontSize: '0.65rem',
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              padding: '7px 14px',
+              cursor: 'pointer',
+              transition: 'all 0.18s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = c.gold; e.currentTarget.style.color = c.gold }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = c.border; e.currentTarget.style.color = c.silver }}
+          >
+            ✕ Exit Room
+          </button>
+        )}
         <div style={{ fontSize: 44, animation: 'crownFloat 3s ease-in-out infinite' }}>♛</div>
         <div style={{
           fontFamily: "'Cinzel', serif",
@@ -633,6 +696,51 @@ export default function App() {
         )}
 
       </div>
+
+      {/* ── Inactivity modal ───────────────────────────────────────────────── */}
+      {showInactivityModal && (
+        <div style={{
+          position: 'fixed', inset: 0,
+          background: 'rgba(0,0,0,0.75)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 1000,
+          padding: 20,
+        }}>
+          <div style={{
+            background: c.bgCard,
+            border: `1px solid ${c.border}`,
+            borderRadius: 6,
+            padding: '32px 28px',
+            maxWidth: 380,
+            width: '100%',
+            textAlign: 'center',
+            animation: 'fadeUp 0.3s ease',
+            boxShadow: '0 12px 48px rgba(0,0,0,0.7)',
+          }}>
+            <div style={{ fontSize: 36, marginBottom: 16 }}>⌛</div>
+            <div style={{
+              fontFamily: "'Cinzel', serif",
+              fontSize: '1rem',
+              letterSpacing: '0.12em',
+              color: c.gold,
+              marginBottom: 12,
+            }}>
+              Welcome Back
+            </div>
+            <p style={{ color: c.silver, fontSize: '0.95rem', lineHeight: 1.65, marginBottom: 24 }}>
+              You've been away for a while. Would you like to start a fresh session or continue where you left off?
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <Btn onClick={exitRoom} fullWidth>
+                New Session
+              </Btn>
+              <Btn onClick={() => setShowInactivityModal(false)} variant="ghost" fullWidth>
+                Continue Current Room
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
