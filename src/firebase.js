@@ -9,18 +9,25 @@
 //     → Create database → Start in TEST MODE (for development)
 // ─────────────────────────────────────────────────────────────
 
-import { initializeApp } from 'firebase/app'
-import { getDatabase } from 'firebase/database'
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
 
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey:            "PASTE_YOUR_API_KEY_HERE",
-  authDomain:        "PASTE_YOUR_AUTH_DOMAIN_HERE",
-  databaseURL:       "PASTE_YOUR_DATABASE_URL_HERE",
-  projectId:         "PASTE_YOUR_PROJECT_ID_HERE",
-  storageBucket:     "PASTE_YOUR_STORAGE_BUCKET_HERE",
-  messagingSenderId: "PASTE_YOUR_MESSAGING_SENDER_ID_HERE",
-  appId:             "PASTE_YOUR_APP_ID_HERE",
-}
+  apiKey: "AIzaSyCV1h_Mr-Q1AOZYHLCT57_5BvOcNfX8uAY",
+  authDomain: "empire-b97dc.firebaseapp.com",
+  databaseURL: "https://empire-b97dc-default-rtdb.firebaseio.com",
+  projectId: "empire-b97dc",
+  storageBucket: "empire-b97dc.firebasestorage.app",
+  messagingSenderId: "853860038340",
+  appId: "1:853860038340:web:82d9aa7322edaeb474fb91",
+  measurementId: "G-05V5G6N9H0"
+};
 
-const app = initializeApp(firebaseConfig)
-export const db = getDatabase(app)
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
