@@ -1,6 +1,9 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { ref, set, onValue, off } from 'firebase/database'
 import { db } from './firebase.js'
+
+// ── Constants ──────────────────────────────────────────────────────────────
+const INACTIVITY_MS = 30 * 60 * 1000 // 30 minutes
 
 // ── Google Fonts ──────────────────────────────────────────────────────────────
 const GlobalStyle = () => (
@@ -36,6 +39,10 @@ const GlobalStyle = () => (
     }
     @keyframes spin {
       to { transform: rotate(360deg); }
+    }
+    @keyframes overlayFadeIn {
+      from { opacity: 0; }
+      to   { opacity: 1; }
     }
   `}</style>
 )
@@ -201,16 +208,54 @@ function makeRoom(code, gmName) {
 
 // ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [screen,     setScreen]     = useState('home')
-  const [room,       setRoom]       = useState(null)
-  const [myName,     setMyName]     = useState('')
-  const [isGM,       setIsGM]       = useState(false)
-  const [inputName,  setInputName]  = useState('')
-  const [inputCode,  setInputCode]  = useState('')
-  const [inputNick,  setInputNick]  = useState('')
-  const [error,      setError]      = useState('')
-  const [loading,    setLoading]    = useState(false)
-  const unsubRef = useRef(null)
+  const [screen,        setScreen]        = useState('home')
+  const [room,          setRoom]          = useState(null)
+  const [myName,        setMyName]        = useState('')
+  const [isGM,          setIsGM]          = useState(false)
+  const [inputName,     setInputName]     = useState('')
+  const [inputCode,     setInputCode]     = useState('')
+  const [inputNick,     setInputNick]     = useState('')
+  const [error,         setError]         = useState('')
+  const [loading,       setLoading]       = useState(false)
+  const [confirmAction, setConfirmAction] = useState(null) // 'exit' | 'restart' | null
+  const unsubRef      = useRef(null)
+  const inactivityRef = useRef(null)
+
+  // ── Go back to home screen (clean reset) ───────────────────────────────────
+  const goHome = useCallback(() => {
+    if (inactivityRef.current) clearTimeout(inactivityRef.current)
+    if (unsubRef.current) { unsubRef.current(); unsubRef.current = null }
+    setRoom(null)
+    setMyName('')
+    setIsGM(false)
+    setInputName('')
+    setInputCode('')
+    setInputNick('')
+    setError('')
+    setLoading(false)
+    setConfirmAction(null)
+    setScreen('home')
+  }, [])
+
+  // ── Inactivity timer ───────────────────────────────────────────────────────
+  const resetInactivity = useCallback(() => {
+    if (inactivityRef.current) clearTimeout(inactivityRef.current)
+    inactivityRef.current = setTimeout(goHome, INACTIVITY_MS)
+  }, [goHome])
+
+  useEffect(() => {
+    if (screen === 'home') {
+      if (inactivityRef.current) clearTimeout(inactivityRef.current)
+      return
+    }
+    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'click', 'scroll']
+    events.forEach(e => window.addEventListener(e, resetInactivity, { passive: true }))
+    resetInactivity()
+    return () => {
+      events.forEach(e => window.removeEventListener(e, resetInactivity))
+      if (inactivityRef.current) clearTimeout(inactivityRef.current)
+    }
+  }, [screen, resetInactivity])
 
   // ── Real-time listener ─────────────────────────────────────────────────────
   function subscribeToRoom(code) {
@@ -223,7 +268,10 @@ export default function App() {
     unsubRef.current = () => off(r, 'value', handler)
   }
 
-  useEffect(() => () => unsubRef.current?.(), [])
+  useEffect(() => () => {
+    if (unsubRef.current) unsubRef.current()
+    if (inactivityRef.current) clearTimeout(inactivityRef.current)
+  }, [])
 
   // ── Derive screen from room state ──────────────────────────────────────────
   useEffect(() => {
@@ -309,6 +357,24 @@ export default function App() {
     await saveRoom(room.code, fresh)
   }
 
+  // ── Restart room (resets to lobby for everyone) ────────────────────────────
+  async function restartRoom() {
+    if (!room) return
+    const fresh = makeRoom(room.code, room.gm)
+    fresh.players = room.players
+    await saveRoom(room.code, fresh)
+    setConfirmAction(null)
+  }
+
+  // ── Confirm dialog handler ─────────────────────────────────────────────────
+  async function handleConfirm() {
+    if (confirmAction === 'exit') {
+      goHome()
+    } else if (confirmAction === 'restart') {
+      await restartRoom()
+    }
+  }
+
   const allSubmitted = room?.players?.length > 0 &&
     room.players.every(p => room.nicknames?.[p.name])
 
@@ -354,6 +420,31 @@ export default function App() {
       </div>
 
       <div style={{ maxWidth: 520, margin: '0 auto', padding: '0 18px' }}>
+
+        {/* ── ROOM CONTROLS (visible on all non-home screens) ───────────── */}
+        {screen !== 'home' && (
+          <div style={{
+            display: 'flex',
+            justifyContent: 'center',
+            gap: 10,
+            padding: '10px 0 4px',
+          }}>
+            <Btn
+              onClick={() => setConfirmAction('exit')}
+              variant="ghost"
+              style={{ fontSize: '0.62rem', padding: '7px 16px', letterSpacing: '0.12em' }}
+            >
+              ← Leave Room
+            </Btn>
+            <Btn
+              onClick={() => setConfirmAction('restart')}
+              variant="crimson"
+              style={{ fontSize: '0.62rem', padding: '7px 16px', letterSpacing: '0.12em' }}
+            >
+              ↺ Restart Room
+            </Btn>
+          </div>
+        )}
 
         {/* ── HOME ─────────────────────────────────────────────────────── */}
         {screen === 'home' && (
@@ -620,6 +711,60 @@ export default function App() {
         )}
 
       </div>
+
+      {/* ── CONFIRM DIALOG ─────────────────────────────────────────────────── */}
+      {confirmAction && (
+        <div
+          onClick={() => setConfirmAction(null)}
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.72)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 200,
+            animation: 'overlayFadeIn 0.2s ease',
+            padding: '0 18px',
+          }}
+        >
+          <div onClick={e => e.stopPropagation()} style={{
+            background: c.bgCard,
+            border: `1px solid ${confirmAction === 'restart' ? 'rgba(139,26,47,0.6)' : c.border}`,
+            borderRadius: 8,
+            padding: '28px 30px',
+            maxWidth: 380,
+            width: '100%',
+            boxShadow: '0 12px 48px rgba(0,0,0,0.7)',
+            animation: 'fadeUp 0.25s ease',
+          }}>
+            <div style={{
+              fontFamily: "'Cinzel', serif",
+              fontSize: '0.68rem',
+              letterSpacing: '0.22em',
+              color: confirmAction === 'restart' ? c.crimsonBrt : c.gold,
+              textTransform: 'uppercase',
+              marginBottom: 14,
+            }}>
+              {confirmAction === 'exit' ? '← Leave Room' : '↺ Restart Room'}
+            </div>
+            <p style={{ color: c.cream, fontSize: '1rem', lineHeight: 1.65, marginBottom: 22 }}>
+              {confirmAction === 'exit'
+                ? 'You will leave this room and return to the home screen. The game will continue for others.'
+                : 'This will reset the room back to the lobby for all players. All nicknames will be cleared.'}
+            </p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <Btn onClick={() => setConfirmAction(null)} variant="ghost" style={{ flex: 1 }}>
+                Cancel
+              </Btn>
+              <Btn
+                onClick={handleConfirm}
+                variant={confirmAction === 'restart' ? 'crimson' : 'ghost'}
+                style={{ flex: 1 }}
+              >
+                {confirmAction === 'exit' ? 'Leave' : 'Restart'}
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
