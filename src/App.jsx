@@ -203,8 +203,8 @@ function makeRoom(code, gmName) {
 export default function App() {
   const [screen,     setScreen]     = useState('home')
   const [room,       setRoom]       = useState(null)
-  const [myName,     setMyName]     = useState('')
-  const [isGM,       setIsGM]       = useState(false)
+  const [myName, setMyName] = useState(() => localStorage.getItem('empire_name') || '')
+  const [isGM,   setIsGM]   = useState(() => localStorage.getItem('empire_isGM') === 'true')
   const [inputName,  setInputName]  = useState('')
   const [inputCode,  setInputCode]  = useState('')
   const [inputNick,  setInputNick]  = useState('')
@@ -224,6 +224,12 @@ export default function App() {
   }
 
   useEffect(() => () => unsubRef.current?.(), [])
+  useEffect(() => {
+  const savedCode = localStorage.getItem('empire_code')
+  const savedName = localStorage.getItem('empire_name')
+  if (savedCode && savedName) subscribeToRoom(savedCode)
+}, [])
+
 
   // ── Derive screen from room state ──────────────────────────────────────────
   useEffect(() => {
@@ -234,7 +240,7 @@ export default function App() {
       return
     }
     if (room.phase === 'reading' || room.phase === 'game') {
-      setScreen(isGM ? 'gm' : 'waiting')
+      setScreen(room.gm === myName ? 'gm' : 'waiting')
     }
   }, [room, myName, isGM])
 
@@ -248,6 +254,9 @@ export default function App() {
     await saveRoom(code, r)
     setMyName(name)
     setIsGM(true)
+    localStorage.setItem('empire_name', name)
+    localStorage.setItem('empire_code', code)
+    localStorage.setItem('empire_isGM', 'true')
     subscribeToRoom(code)
     setLoading(false)
   }
@@ -274,6 +283,9 @@ export default function App() {
     await saveRoom(code, updated)
     setMyName(name)
     setIsGM(false)
+    localStorage.setItem('empire_name', name)
+    localStorage.setItem('empire_code', code)
+    localStorage.setItem('empire_isGM', 'false')
     subscribeToRoom(code)
     setLoading(false)
   }
