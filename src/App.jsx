@@ -922,14 +922,14 @@ export default function App() {
                   return (
                     <div
                       key={p.name}
-                      onClick={isGM && !isOut ? () => toggleEliminated(p.name) : undefined}
+                      onClick={isGM ? () => toggleEliminated(p.name) : undefined}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 8,
                         padding: '11px 14px',
                         background: isOut ? 'rgba(0,0,0,0.12)' : isTurn ? 'rgba(201,168,76,0.06)' : 'rgba(0,0,0,0.28)',
                         borderRadius: 4,
                         border: `1px solid ${isOut ? 'rgba(201,168,76,0.07)' : isTurn ? c.goldDim : c.border}`,
-                        cursor: isGM && !isOut ? 'pointer' : 'default',
+                        cursor: isGM ? 'pointer' : 'default',
                         opacity: isOut ? 0.32 : 1,
                         transition: 'all 0.2s',
                         userSelect: 'none',
