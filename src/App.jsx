@@ -205,8 +205,8 @@ function makeRoom(code, gmName) {
 export default function App() {
   const [screen,     setScreen]     = useState('home')
   const [room,       setRoom]       = useState(null)
-  const [myName, setMyName] = useState(() => localStorage.getItem('empire_name') || '')
-  const [isGM,   setIsGM]   = useState(() => localStorage.getItem('empire_isGM') === 'true')
+  const [myName, setMyName] = useState('')
+  const [isGM,   setIsGM]   = useState(false)
   const [inputCreateName, setInputCreateName] = useState('')
   const [inputJoinName,   setInputJoinName]   = useState('')
   const [inputCode,       setInputCode]       = useState('')
@@ -240,21 +240,12 @@ export default function App() {
 
   useEffect(() => () => unsubRef.current?.(), [])
 
-  // ── Restore session only if recent; otherwise start fresh ─────────────────
+  // ── Always start fresh on load/refresh ────────────────────────────────────
   useEffect(() => {
-    const savedCode     = localStorage.getItem('empire_code')
-    const savedName     = localStorage.getItem('empire_name')
-    const lastActive    = localStorage.getItem('empire_lastActive')
-    const isStale       = !lastActive || (Date.now() - Number(lastActive)) > STALE_MS
-
-    if (savedCode && savedName && !isStale) {
-      subscribeToRoom(savedCode)
-    } else {
-      localStorage.removeItem('empire_code')
-      localStorage.removeItem('empire_name')
-      localStorage.removeItem('empire_isGM')
-      localStorage.removeItem('empire_lastActive')
-    }
+    localStorage.removeItem('empire_code')
+    localStorage.removeItem('empire_name')
+    localStorage.removeItem('empire_isGM')
+    localStorage.removeItem('empire_lastActive')
   }, [])
 
   // ── Reset to home when user returns to tab after being away too long ───────
@@ -687,7 +678,7 @@ export default function App() {
                         fontStyle: 'italic',
                         fontSize: '0.95rem',
                         textDecoration: isOut ? 'line-through' : 'none',
-                      }}>{room.nicknames?.[p.name]}</span>
+                      }}>{room.gm === myName ? room.nicknames?.[p.name] : null}</span>
                     </div>
                   )
                 })}
