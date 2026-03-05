@@ -163,6 +163,33 @@ const Divider = ({ label }) => (
   </div>
 )
 
+const CopyCodeBtn = ({ code }) => {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+  return (
+    <button onClick={copy} style={{
+      background: 'transparent',
+      border: `1px solid ${copied ? c.greenBrd : c.border}`,
+      borderRadius: 3,
+      color: copied ? '#90ee90' : c.silver,
+      fontFamily: "'Cinzel', serif",
+      fontSize: '0.65rem',
+      letterSpacing: '0.12em',
+      textTransform: 'uppercase',
+      padding: '6px 16px',
+      cursor: 'pointer',
+      transition: 'all 0.18s',
+    }}>
+      {copied ? '✓ Copied!' : '⎘ Copy Code'}
+    </button>
+  )
+}
+
 const Spinner = () => (
   <span style={{
     display: 'inline-block',
@@ -199,6 +226,9 @@ function makeRoom(code, gmName) {
     nicknames: {},
     eliminated: {},
     rereadVotes: {},
+    currentTurn: null,
+    empires: {},
+    createdAt: Date.now(),
   }
 }
 
@@ -238,7 +268,9 @@ export default function App() {
       setScreen(room.nicknames?.[myName] ? 'waiting' : 'nickname')
       return
     }
-    if (room.phase === 'reading' || room.phase === 'game') { setScreen('game'); return }
+    if (room.phase === 'reading') { setScreen(room.gm === myName ? 'gm' : 'reading'); return }
+    if (room.phase === 'game')   { setScreen('game');  return }
+    if (room.phase === 'ended')  { setScreen('ended'); return }
     setScreen('home')
   }
 
@@ -294,15 +326,19 @@ export default function App() {
   // ── Derive screen from room state ──────────────────────────────────────────
   useEffect(() => {
     if (!room || !myName) return
-    if (room.phase === 'lobby')     { setScreen('lobby');    return }
+    if (room.phase === 'disbanded') { exitRoom(); return }
+    if (room.phase === 'lobby')     { setScreen('lobby'); return }
     if (room.phase === 'nicknames') {
-    if (room.gm === myName) { setScreen('gm'); return }
+      if (room.gm === myName) { setScreen('gm'); return }
       setScreen(room.nicknames?.[myName] ? 'waiting' : 'nickname')
-    return
+      return
     }
-    if (room.phase === 'reading' || room.phase === 'game') {
-      setScreen('game')
+    if (room.phase === 'reading') {
+      setScreen(room.gm === myName ? 'gm' : 'reading')
+      return
     }
+    if (room.phase === 'game')  { setScreen('game');  return }
+    if (room.phase === 'ended') { setScreen('ended'); return }
   }, [room, myName, isGM])
 
   // ── Actions ────────────────────────────────────────────────────────────────
@@ -346,10 +382,27 @@ export default function App() {
     })
 
     const data = snap.val()
-    if (!data)                    { setError('Room not found — check the code'); setLoading(false); return }
+    if (!data) { setError('Room not found — check the code'); setLoading(false); return }
+
+    // Expire rooms older than 24 hours
+    if (data.createdAt && Date.now() - data.createdAt > 24 * 60 * 60 * 1000) {
+      setError('This room has expired'); setLoading(false); return
+    }
+
+    const existingPlayer = (data.players || []).find(p => p.name.toLowerCase() === name.toLowerCase())
+
+    // Reconnection: player already in the game can rejoin
+    if (existingPlayer && data.phase !== 'lobby') {
+      setMyName(existingPlayer.name)
+      setIsGM(existingPlayer.isGM)
+      localStorage.setItem('empire_lastActive', Date.now().toString())
+      subscribeToRoom(code)
+      setLoading(false)
+      return
+    }
+
     if (data.phase !== 'lobby')   { setError('This game has already started');   setLoading(false); return }
-    const nameTaken = (data.players || []).some(p => p.name.toLowerCase() === name.toLowerCase())
-    if (nameTaken)                { setError('That name is already taken');       setLoading(false); return }
+    if (existingPlayer)           { setError('That name is already taken');       setLoading(false); return }
 
     const updated = { ...data, players: [...(data.players || []), { name, isGM: false }] }
     await saveRoom(code, updated)
@@ -384,14 +437,27 @@ export default function App() {
     await saveRoom(room.code, { ...room, phase: 'game' })
   }
 
+  async function setCurrentTurn(playerName) {
+    const next = room.currentTurn === playerName ? null : playerName
+    await saveRoom(room.code, { ...room, currentTurn: next })
+  }
+
   async function toggleEliminated(playerName) {
     const eliminated = { ...(room.eliminated || {}) }
+    const empires    = JSON.parse(JSON.stringify(room.empires || {}))
     if (eliminated[playerName]) {
       delete eliminated[playerName]
+      for (const captor of Object.keys(empires)) {
+        empires[captor] = (empires[captor] || []).filter(n => n !== playerName)
+        if (!empires[captor].length) delete empires[captor]
+      }
     } else {
       eliminated[playerName] = true
+      if (room.currentTurn && room.currentTurn !== playerName) {
+        empires[room.currentTurn] = [...(empires[room.currentTurn] || []), playerName]
+      }
     }
-    await saveRoom(room.code, { ...room, eliminated })
+    await saveRoom(room.code, { ...room, eliminated, empires })
   }
 
   async function toggleRereadVote() {
@@ -405,9 +471,17 @@ export default function App() {
   }
 
   async function endGame() {
+    await saveRoom(room.code, { ...room, phase: 'ended' })
+  }
+
+  async function startNewGameSamePlayers() {
     const fresh = makeRoom(room.code, room.gm)
     fresh.players = room.players
     await saveRoom(room.code, fresh)
+  }
+
+  async function disbandRoom() {
+    await saveRoom(room.code, { ...room, phase: 'disbanded' })
   }
 
   const nonGMPlayers = (room?.players || []).filter(p => p.name !== room?.gm)
@@ -605,6 +679,9 @@ export default function App() {
               <p style={{ color: c.silver, fontSize: '0.88rem', textAlign: 'center', fontStyle: 'italic' }}>
                 Everyone opens this same page and taps "Join a Room"
               </p>
+              <div style={{ textAlign: 'center', marginTop: 10 }}>
+                <CopyCodeBtn code={room.code} />
+              </div>
             </Card>
 
             <Card>
@@ -699,10 +776,10 @@ export default function App() {
           </>
         )}
 
-        {/* ── GM SCREEN (nickname collection phase) ────────────────────── */}
+        {/* ── GM SCREEN (nickname collection + reading phase) ──────────── */}
         {screen === 'gm' && room && (
           <>
-            <Divider label="Collecting Nicknames" />
+            <Divider label={room.phase === 'reading' ? 'Reading Phase' : 'Collecting Nicknames'} />
             <Card style={{ padding: '16px 20px' }}>
               <CardTitle>📜 Players & Nicknames — only you see this</CardTitle>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -731,12 +808,37 @@ export default function App() {
                 })}
               </div>
             </Card>
-            {allSubmitted
-              ? <Btn onClick={startGame} fullWidth>Everyone's in — Start Game ⚔</Btn>
-              : <p style={{ color: c.silver, fontStyle: 'italic', fontSize: '0.9rem', textAlign: 'center', marginTop: 8 }}>
-                  Waiting for everyone to submit their nickname…
+            {room.phase === 'nicknames' && (
+              allSubmitted
+                ? <Btn onClick={startReading} fullWidth>Everyone's in — Start Reading ♛</Btn>
+                : <p style={{ color: c.silver, fontStyle: 'italic', fontSize: '0.9rem', textAlign: 'center', marginTop: 8 }}>
+                    Waiting for everyone to submit their nickname…
+                  </p>
+            )}
+            {room.phase === 'reading' && (
+              <>
+                <p style={{ color: c.silver, fontStyle: 'italic', fontSize: '0.9rem', textAlign: 'center', marginTop: 4, marginBottom: 14 }}>
+                  Read all nicknames aloud — twice. Then start guessing.
                 </p>
-            }
+                <Btn onClick={startGame} fullWidth>Done Reading — Start Guessing ⚔</Btn>
+              </>
+            )}
+          </>
+        )}
+
+        {/* ── READING SCREEN (non-GM during reading phase) ─────────────── */}
+        {screen === 'reading' && room && (
+          <>
+            <Divider label="Listen Closely" />
+            <Card style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 36, marginBottom: 12 }}>📣</div>
+              <div style={{ fontFamily: "'Cinzel', serif", color: c.gold, fontSize: '1.05rem', marginBottom: 10 }}>
+                The GM is reading the nicknames
+              </div>
+              <p style={{ color: c.silver, fontSize: '0.95rem', lineHeight: 1.65 }}>
+                Listen carefully — the nicknames will be read aloud twice. Try to remember as many as you can before guessing begins!
+              </p>
+            </Card>
           </>
         )}
 
@@ -744,6 +846,13 @@ export default function App() {
         {screen === 'game' && room && (
           <>
             <Divider label="The Empire" />
+
+            {/* Player count badge */}
+            <div style={{ textAlign: 'center', marginBottom: 10, marginTop: -8 }}>
+              <span style={{ color: c.silver, fontSize: '0.82rem', fontFamily: "'Cinzel', serif", letterSpacing: '0.08em' }}>
+                {livingNonGMPlayers.length} alive · {nonGMPlayers.length} total
+              </span>
+            </div>
 
             {/* Re-read requested banner */}
             {rereadRequested && (
@@ -771,32 +880,97 @@ export default function App() {
               </div>
             )}
 
+            {/* Turn indicator */}
+            {room.currentTurn && (
+              <div style={{
+                background: 'rgba(201,168,76,0.07)',
+                border: `1px solid ${c.border}`,
+                borderRadius: 4,
+                padding: '10px 16px',
+                marginBottom: 10,
+                display: 'flex', alignItems: 'center', gap: 10,
+              }}>
+                <span style={{ color: c.gold, fontSize: '1rem' }}>▶</span>
+                <span style={{ fontFamily: "'Cinzel', serif", color: c.cream, fontSize: '0.82rem', letterSpacing: '0.08em' }}>
+                  {room.currentTurn}'s Turn
+                </span>
+              </div>
+            )}
+
+            {/* Spectator view for eliminated players */}
+            {!isGM && room.eliminated?.[myName] ? (
+              <Card style={{ textAlign: 'center', padding: '20px' }}>
+                <div style={{ fontSize: 28, marginBottom: 10 }}>👁</div>
+                <div style={{ fontFamily: "'Cinzel', serif", color: c.silver, fontSize: '0.85rem', letterSpacing: '0.1em', marginBottom: 8 }}>
+                  You have been eliminated
+                </div>
+                <p style={{ color: c.silver, fontSize: '0.88rem', lineHeight: 1.6, fontStyle: 'italic' }}>
+                  Watch as the remaining players battle for the empire…
+                </p>
+              </Card>
+            ) : null}
+
             <Card style={{ padding: '16px 20px' }}>
-              <CardTitle>{isGM ? '⚔ Players — tap to eliminate' : '⚔ Players'}</CardTitle>
+              <CardTitle>
+                {isGM ? '⚔ Players — tap to eliminate' : '⚔ Players'}
+              </CardTitle>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {nonGMPlayers.map(p => {
-                  const isOut = !!room.eliminated?.[p.name]
+                  const isOut      = !!room.eliminated?.[p.name]
+                  const isTurn     = room.currentTurn === p.name
+                  const empireSize = (room.empires?.[p.name] || []).length
                   return (
                     <div
                       key={p.name}
-                      onClick={isGM ? () => toggleEliminated(p.name) : undefined}
+                      onClick={isGM && !isOut ? () => toggleEliminated(p.name) : undefined}
                       style={{
-                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        display: 'flex', alignItems: 'center', gap: 8,
                         padding: '11px 14px',
-                        background: isOut ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.28)',
+                        background: isOut ? 'rgba(0,0,0,0.12)' : isTurn ? 'rgba(201,168,76,0.06)' : 'rgba(0,0,0,0.28)',
                         borderRadius: 4,
-                        border: `1px solid ${isOut ? 'rgba(201,168,76,0.07)' : c.border}`,
-                        cursor: isGM ? 'pointer' : 'default',
+                        border: `1px solid ${isOut ? 'rgba(201,168,76,0.07)' : isTurn ? c.goldDim : c.border}`,
+                        cursor: isGM && !isOut ? 'pointer' : 'default',
                         opacity: isOut ? 0.32 : 1,
-                        transition: 'opacity 0.2s',
+                        transition: 'all 0.2s',
                         userSelect: 'none',
                       }}
                     >
+                      {/* GM: turn-setter button */}
+                      {isGM && !isOut && (
+                        <button
+                          onClick={e => { e.stopPropagation(); setCurrentTurn(p.name) }}
+                          title="Set as current turn"
+                          style={{
+                            flexShrink: 0,
+                            background: isTurn ? c.gold : 'transparent',
+                            border: `1px solid ${isTurn ? c.gold : c.goldDim}`,
+                            borderRadius: 2,
+                            color: isTurn ? '#0a0f1a' : c.goldDim,
+                            fontSize: '0.65rem',
+                            width: 22, height: 22,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s',
+                          }}
+                        >▶</button>
+                      )}
                       <span style={{
+                        flex: 1,
                         color: c.cream,
                         fontSize: '1rem',
                         textDecoration: isOut ? 'line-through' : 'none',
                       }}>{p.name}</span>
+                      {empireSize > 0 && (
+                        <span style={{
+                          background: 'rgba(201,168,76,0.12)',
+                          border: `1px solid ${c.goldDim}`,
+                          borderRadius: 10,
+                          color: c.gold,
+                          fontSize: '0.7rem',
+                          fontFamily: "'Cinzel', serif",
+                          padding: '1px 8px',
+                        }}>{empireSize} ♛</span>
+                      )}
                       <span style={{
                         color: c.silver,
                         fontStyle: 'italic',
@@ -836,11 +1010,85 @@ export default function App() {
               </button>
             )}
 
+            {isGM && livingNonGMPlayers.length <= 2 && (
+              <Btn onClick={endGame} fullWidth style={{ marginBottom: 10 }}>End Game — Reveal Winner ♛</Btn>
+            )}
             {isGM && (
-              <Btn onClick={endGame} variant="ghost" fullWidth>New Game</Btn>
+              <Btn onClick={startNewGameSamePlayers} variant="ghost" fullWidth>New Game — Same Players</Btn>
             )}
           </>
         )}
+
+        {/* ── ENDED / WIN SCREEN ───────────────────────────────────────── */}
+        {screen === 'ended' && room && (() => {
+          const ranked = livingNonGMPlayers
+            .map(p => ({ name: p.name, size: (room.empires?.[p.name] || []).length }))
+            .sort((a, b) => b.size - a.size)
+          const winner = ranked[0]
+          const isTie  = ranked.length >= 2 && ranked[0]?.size === ranked[1]?.size
+          return (
+            <>
+              <Divider label="Game Over" />
+              <Card style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 44, animation: 'crownFloat 3s ease-in-out infinite', marginBottom: 8 }}>♛</div>
+                {isTie ? (
+                  <>
+                    <div style={{ fontFamily: "'Cinzel', serif", color: c.gold, fontSize: '1.1rem', letterSpacing: '0.1em', marginBottom: 6 }}>
+                      It's a Tie!
+                    </div>
+                    <p style={{ color: c.silver, fontSize: '0.9rem' }}>
+                      {ranked.map(p => p.name).join(' & ')} each rule {winner?.size} player{winner?.size !== 1 ? 's' : ''}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontFamily: "'Cinzel', serif", color: c.gold, fontSize: '1.3rem', letterSpacing: '0.1em', marginBottom: 4 }}>
+                      {winner?.name}
+                    </div>
+                    <div style={{ color: c.silver, fontStyle: 'italic', fontSize: '0.9rem', marginBottom: 4 }}>
+                      rules the empire with {winner?.size} conquest{winner?.size !== 1 ? 's' : ''}
+                    </div>
+                  </>
+                )}
+              </Card>
+
+              {/* Nickname reveal */}
+              <Card style={{ padding: '16px 20px' }}>
+                <CardTitle>📜 The Full Reveal</CardTitle>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {nonGMPlayers.map(p => {
+                    const empireMembers = room.empires?.[p.name] || []
+                    return (
+                      <div key={p.name} style={{ padding: '10px 14px', borderRadius: 4, background: 'rgba(0,0,0,0.25)', border: `1px solid ${c.border}` }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ color: c.cream, fontSize: '1rem' }}>{p.name}</span>
+                          <span style={{ color: c.gold, fontStyle: 'italic', fontSize: '0.95rem' }}>{room.nicknames?.[p.name]}</span>
+                        </div>
+                        {empireMembers.length > 0 && (
+                          <div style={{ marginTop: 4, fontSize: '0.78rem', color: c.silver }}>
+                            Captured: {empireMembers.join(', ')}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </Card>
+
+              {isGM && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <Btn onClick={startNewGameSamePlayers} fullWidth>Play Again — Same Players</Btn>
+                  <Btn onClick={disbandRoom} variant="crimson" fullWidth>End Session</Btn>
+                </div>
+              )}
+              {!isGM && (
+                <p style={{ color: c.silver, fontStyle: 'italic', fontSize: '0.88rem', textAlign: 'center' }}>
+                  Waiting for the GM to start a new game…
+                </p>
+              )}
+            </>
+          )
+        })()}
 
       </div>
 
