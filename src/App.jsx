@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import { ref, set, onValue, off } from 'firebase/database'
 import { db } from './firebase.js'
 
+const STALE_MS = 30 * 60 * 1000 // 30 min — saved session treated as stale
+
 // ── Google Fonts ──────────────────────────────────────────────────────────────
 const GlobalStyle = () => (
   <style>{`
@@ -195,7 +197,7 @@ function makeRoom(code, gmName) {
     phase: 'lobby',
     players: [{ name: gmName, isGM: true }],
     nicknames: {},
-    showList: false,
+    eliminated: {},
   }
 }
 
@@ -205,31 +207,13 @@ export default function App() {
   const [room,       setRoom]       = useState(null)
   const [myName, setMyName] = useState(() => localStorage.getItem('empire_name') || '')
   const [isGM,   setIsGM]   = useState(() => localStorage.getItem('empire_isGM') === 'true')
-  const [inputName,  setInputName]  = useState('')
-  const [inputCode,  setInputCode]  = useState('')
+  const [inputCreateName, setInputCreateName] = useState('')
+  const [inputJoinName,   setInputJoinName]   = useState('')
+  const [inputCode,       setInputCode]       = useState('')
   const [inputNick,  setInputNick]  = useState('')
   const [error,      setError]      = useState('')
   const [loading,    setLoading]    = useState(false)
-  const [showInactivityModal, setShowInactivityModal] = useState(false)
   const unsubRef = useRef(null)
-
-  // ── Exit room ──────────────────────────────────────────────────────────────
-  function exitRoom() {
-    if (unsubRef.current) unsubRef.current()
-    localStorage.removeItem('empire_name')
-    localStorage.removeItem('empire_code')
-    localStorage.removeItem('empire_isGM')
-    localStorage.removeItem('empire_hidden_at')
-    setRoom(null)
-    setMyName('')
-    setIsGM(false)
-    setInputName('')
-    setInputCode('')
-    setInputNick('')
-    setError('')
-    setShowInactivityModal(false)
-    setScreen('home')
-  }
 
   // ── Real-time listener ─────────────────────────────────────────────────────
   function subscribeToRoom(code) {
@@ -243,24 +227,37 @@ export default function App() {
   }
 
   useEffect(() => () => unsubRef.current?.(), [])
+
+  // ── Restore session only if recent; otherwise start fresh ─────────────────
   useEffect(() => {
-    const savedCode = localStorage.getItem('empire_code')
-    const savedName = localStorage.getItem('empire_name')
-    if (savedCode && savedName) subscribeToRoom(savedCode)
+    const savedCode     = localStorage.getItem('empire_code')
+    const savedName     = localStorage.getItem('empire_name')
+    const lastActive    = localStorage.getItem('empire_lastActive')
+    const isStale       = !lastActive || (Date.now() - Number(lastActive)) > STALE_MS
+
+    if (savedCode && savedName && !isStale) {
+      subscribeToRoom(savedCode)
+    } else {
+      localStorage.removeItem('empire_code')
+      localStorage.removeItem('empire_name')
+      localStorage.removeItem('empire_isGM')
+      localStorage.removeItem('empire_lastActive')
+    }
   }, [])
 
-  // ── Inactivity detection (30 min away triggers new-session prompt) ─────────
-  const INACTIVITY_MS = 30 * 60 * 1000
+  // ── Reset to home when user returns to tab after being away too long ───────
   useEffect(() => {
-    function handleVisibility() {
-      if (document.hidden) {
-        localStorage.setItem('empire_hidden_at', Date.now().toString())
-      } else {
-        const hiddenAt = parseInt(localStorage.getItem('empire_hidden_at') || '0', 10)
-        localStorage.removeItem('empire_hidden_at')
-        if (hiddenAt && Date.now() - hiddenAt > INACTIVITY_MS) {
-          setShowInactivityModal(true)
-        }
+    const handleVisibility = () => {
+      if (document.hidden) return
+      const lastActive = localStorage.getItem('empire_lastActive')
+      const isStale    = !lastActive || (Date.now() - Number(lastActive)) > STALE_MS
+      if (isStale) {
+        localStorage.removeItem('empire_code')
+        localStorage.removeItem('empire_name')
+        localStorage.removeItem('empire_isGM')
+        localStorage.removeItem('empire_lastActive')
+        if (unsubRef.current) { unsubRef.current(); unsubRef.current = null }
+        setRoom(null); setMyName(''); setIsGM(false); setScreen('home')
       }
     }
     document.addEventListener('visibilitychange', handleVisibility)
@@ -278,13 +275,23 @@ export default function App() {
     return
     }
     if (room.phase === 'reading' || room.phase === 'game') {
-      setScreen(room.gm === myName ? 'gm' : 'waiting')
+      setScreen('game')
     }
   }, [room, myName, isGM])
 
   // ── Actions ────────────────────────────────────────────────────────────────
+  // ── Keep lastActive fresh while user is in a room ─────────────────────────
+  useEffect(() => {
+    if (screen === 'home') return
+    localStorage.setItem('empire_lastActive', Date.now().toString())
+    const id = setInterval(() => {
+      localStorage.setItem('empire_lastActive', Date.now().toString())
+    }, 60_000)
+    return () => clearInterval(id)
+  }, [screen])
+
   async function createRoom() {
-    const name = inputName.trim()
+    const name = inputCreateName.trim()
     if (!name) { setError('Enter your name'); return }
     setLoading(true); setError('')
     const code = genCode()
@@ -295,12 +302,13 @@ export default function App() {
     localStorage.setItem('empire_name', name)
     localStorage.setItem('empire_code', code)
     localStorage.setItem('empire_isGM', 'true')
+    localStorage.setItem('empire_lastActive', Date.now().toString())
     subscribeToRoom(code)
     setLoading(false)
   }
 
   async function joinRoom() {
-    const name = inputName.trim()
+    const name = inputJoinName.trim()
     const code = inputCode.trim().toUpperCase()
     if (!name || !code) { setError('Enter your name and a room code'); return }
     setLoading(true); setError('')
@@ -324,6 +332,7 @@ export default function App() {
     localStorage.setItem('empire_name', name)
     localStorage.setItem('empire_code', code)
     localStorage.setItem('empire_isGM', 'false')
+    localStorage.setItem('empire_lastActive', Date.now().toString())
     subscribeToRoom(code)
     setLoading(false)
   }
@@ -342,15 +351,21 @@ export default function App() {
   }
 
   async function startReading() {
-    await saveRoom(room.code, { ...room, phase: 'reading', showList: true })
-  }
-
-  async function toggleList() {
-    await saveRoom(room.code, { ...room, showList: !room.showList })
+    await saveRoom(room.code, { ...room, phase: 'reading' })
   }
 
   async function startGame() {
-    await saveRoom(room.code, { ...room, phase: 'game', showList: false })
+    await saveRoom(room.code, { ...room, phase: 'game' })
+  }
+
+  async function toggleEliminated(playerName) {
+    const eliminated = { ...(room.eliminated || {}) }
+    if (eliminated[playerName]) {
+      delete eliminated[playerName]
+    } else {
+      eliminated[playerName] = true
+    }
+    await saveRoom(room.code, { ...room, eliminated })
   }
 
   async function endGame() {
@@ -359,17 +374,9 @@ export default function App() {
     await saveRoom(room.code, fresh)
   }
 
-  const allSubmitted = room?.players?.length > 0 &&
-    room.players.every(p => room.nicknames?.[p.name])
-
-  // ── Nickname list (shuffled deterministically by room code) ───────────────
-  function getSortedNicknames() {
-    const nicks = Object.values(room?.nicknames || {})
-    return [...nicks].sort((a, b) => {
-      const h = s => [...(room.code + s)].reduce((n, ch) => n + ch.charCodeAt(0), 0)
-      return h(a) - h(b)
-    })
-  }
+  const nonGMPlayers = (room?.players || []).filter(p => p.name !== room?.gm)
+  const allSubmitted = nonGMPlayers.length > 0 &&
+    nonGMPlayers.every(p => room.nicknames?.[p.name])
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -384,33 +391,7 @@ export default function App() {
       <GlobalStyle />
 
       {/* Header */}
-      <div style={{ position: 'relative', textAlign: 'center', padding: '40px 20px 10px' }}>
-        {screen !== 'home' && (
-          <button
-            onClick={exitRoom}
-            title="Exit room and return to Home"
-            style={{
-              position: 'absolute',
-              top: 20,
-              right: 18,
-              background: 'transparent',
-              border: `1px solid ${c.border}`,
-              borderRadius: 3,
-              color: c.silver,
-              fontFamily: "'Cinzel', serif",
-              fontSize: '0.65rem',
-              letterSpacing: '0.12em',
-              textTransform: 'uppercase',
-              padding: '7px 14px',
-              cursor: 'pointer',
-              transition: 'all 0.18s',
-            }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = c.gold; e.currentTarget.style.color = c.gold }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = c.border; e.currentTarget.style.color = c.silver }}
-          >
-            ✕ Exit Room
-          </button>
-        )}
+      <div style={{ textAlign: 'center', padding: '40px 20px 10px' }}>
         <div style={{ fontSize: 44, animation: 'crownFloat 3s ease-in-out infinite' }}>♛</div>
         <div style={{
           fontFamily: "'Cinzel', serif",
@@ -441,7 +422,7 @@ export default function App() {
                 You'll be the Gamemaster. A room code will be generated to share with your players.
               </p>
               <Input
-                value={inputName} onChange={setInputName}
+                value={inputCreateName} onChange={setInputCreateName}
                 placeholder="Your name…"
                 onKeyDown={e => e.key === 'Enter' && createRoom()}
               />
@@ -459,7 +440,7 @@ export default function App() {
                 Enter the code your Gamemaster shared.
               </p>
               <div style={{ marginBottom: 10 }}>
-                <Input value={inputName} onChange={setInputName} placeholder="Your name…" />
+                <Input value={inputJoinName} onChange={setInputJoinName} placeholder="Your name…" />
               </div>
               <Input
                 value={inputCode}
@@ -561,186 +542,118 @@ export default function App() {
           </>
         )}
 
-        {/* ── WAITING ──────────────────────────────────────────────────── */}
+        {/* ── WAITING (nickname phase only) ────────────────────────────── */}
         {screen === 'waiting' && room && (
           <>
             <Divider label="Awaiting the Court" />
             <Card style={{ textAlign: 'center' }}>
-              {room.phase === 'nicknames' && (
-                <>
-                  <div style={{ fontSize: 36, marginBottom: 12 }}>⏳</div>
-                  <div style={{ fontFamily: "'Cinzel', serif", color: c.gold, fontSize: '1.1rem', marginBottom: 8 }}>
-                    Nickname submitted!
-                  </div>
-                  <p style={{ color: c.silver, fontSize: '0.95rem', lineHeight: 1.6 }}>
-                    Waiting for everyone else…
-                  </p>
-                  <div style={{ marginTop: 18, display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
-                    {(room.players || []).map(p => {
-                      const done = !!room.nicknames?.[p.name]
-                      return (
-                        <div key={p.name} style={{
-                          padding: '5px 13px', borderRadius: 3,
-                          border: `1px solid ${done ? c.greenBrd : c.border}`,
-                          background: done ? c.green : 'transparent',
-                          fontSize: '0.88rem',
-                          color: done ? '#90ee90' : c.silver,
-                        }}>
-                          {done ? '✓' : '○'} {p.name}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </>
-              )}
-              {(room.phase === 'reading' || room.phase === 'game') && (
-                <>
-                  <div style={{ fontSize: 36, marginBottom: 12, animation: 'crownFloat 2.5s ease-in-out infinite' }}>♛</div>
-                  <div style={{ fontFamily: "'Cinzel', serif", color: c.gold, fontSize: '1.05rem', marginBottom: 8 }}>
-                    {room.phase === 'reading' ? 'The Gamemaster is reading the nicknames aloud…' : 'The game is underway!'}
-                  </div>
-                  <p style={{ color: c.silver, fontSize: '0.95rem', fontStyle: 'italic' }}>
-                    Listen carefully — the rest is played in person!
-                  </p>
-                </>
-              )}
+              <div style={{ fontSize: 36, marginBottom: 12 }}>⏳</div>
+              <div style={{ fontFamily: "'Cinzel', serif", color: c.gold, fontSize: '1.1rem', marginBottom: 8 }}>
+                Nickname submitted!
+              </div>
+              <p style={{ color: c.silver, fontSize: '0.95rem', lineHeight: 1.6 }}>
+                Waiting for everyone else…
+              </p>
+              <div style={{ marginTop: 18, display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
+                {nonGMPlayers.map(p => {
+                  const done = !!room.nicknames?.[p.name]
+                  return (
+                    <div key={p.name} style={{
+                      padding: '5px 13px', borderRadius: 3,
+                      border: `1px solid ${done ? c.greenBrd : c.border}`,
+                      background: done ? c.green : 'transparent',
+                      fontSize: '0.88rem',
+                      color: done ? '#90ee90' : c.silver,
+                    }}>
+                      {done ? '✓' : '○'} {p.name}
+                    </div>
+                  )
+                })}
+              </div>
             </Card>
           </>
         )}
 
-        {/* ── GM SCREEN ────────────────────────────────────────────────── */}
+        {/* ── GM SCREEN (nickname collection phase only) ───────────────── */}
         {screen === 'gm' && room && (
           <>
-            <Divider label={room.phase === 'reading' ? "Gamemaster's Scroll" : 'The Game'} />
-
-            {/* Nickname list toggle */}
+            <Divider label="Collecting Nicknames" />
             <Card>
-              <CardTitle>📜 Nickname List</CardTitle>
-              <p style={{ color: c.silver, fontSize: '0.92rem', marginBottom: 18, lineHeight: 1.6 }}>
-                {room.phase === 'reading'
-                  ? 'Reveal to read aloud. Hide before passing the device back.'
-                  : 'Reveal if the group votes for a re-read.'}
-              </p>
-              <Btn onClick={toggleList} fullWidth variant={room.showList ? 'crimson' : 'gold'}>
-                {room.showList ? '🙈  Hide the List' : '📜  Reveal the List'}
-              </Btn>
-
-              {room.showList && (
-                <div style={{
-                  marginTop: 18,
-                  background: 'rgba(0,0,0,0.35)',
-                  border: `1px solid ${c.border}`,
-                  borderRadius: 4,
-                  padding: 16,
-                  animation: 'fadeUp 0.3s ease',
-                }}>
-                  {getSortedNicknames().map((n, i, arr) => (
-                    <div key={n} style={{
-                      display: 'flex', alignItems: 'center', gap: 12,
-                      padding: '9px 0',
-                      borderBottom: i < arr.length - 1 ? '1px solid rgba(201,168,76,0.1)' : 'none',
-                      fontSize: '1.05rem',
-                      color: c.cream,
+              <CardTitle>⚜ Submission Progress</CardTitle>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {nonGMPlayers.map(p => {
+                  const done = !!room.nicknames?.[p.name]
+                  return (
+                    <div key={p.name} style={{
+                      padding: '6px 14px', borderRadius: 3,
+                      border: `1px solid ${done ? c.greenBrd : c.border}`,
+                      background: done ? c.green : 'transparent',
+                      fontSize: '0.9rem',
+                      color: done ? '#90ee90' : c.silver,
                     }}>
-                      <span style={{ fontFamily: "'Cinzel', serif", fontSize: '0.7rem', color: c.goldDim, minWidth: 22 }}>
-                        {i + 1}.
-                      </span>
-                      {n}
+                      {done ? '✓' : '○'} {p.name}
                     </div>
-                  ))}
-                </div>
-              )}
-            </Card>
-
-            {/* Private name → nickname reference */}
-            <Card>
-              <CardTitle>🔒 Secret Reference — Only You See This</CardTitle>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {(room.players || []).map(p => (
-                  <div key={p.name} style={{
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    padding: '8px 12px',
-                    background: 'rgba(0,0,0,0.25)',
-                    borderRadius: 3,
-                    border: `1px solid ${c.border}`,
-                  }}>
-                    <span style={{ color: p.isGM ? c.gold : c.cream, fontSize: '0.95rem' }}>
-                      {p.isGM ? '♛ ' : ''}{p.name}
-                    </span>
-                    <span style={{ color: c.silver, fontStyle: 'italic', fontSize: '0.92rem' }}>
-                      {room.nicknames?.[p.name] ?? <span style={{ opacity: 0.35 }}>pending…</span>}
-                    </span>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </Card>
-
-            <div style={{ display: 'flex', gap: 10 }}>
-              {room.phase === 'reading' && allSubmitted && (
-                <Btn onClick={startGame} style={{ flex: 1 }}>
-                  Nicknames Read — Start Game ⚔
-                </Btn>
-              )}
-              {room.phase === 'reading' && !allSubmitted && (
-                <p style={{ color: c.silver, fontStyle: 'italic', fontSize: '0.9rem' }}>
-                  Waiting for all nicknames before you can start…
+            {allSubmitted
+              ? <Btn onClick={startGame} fullWidth>Everyone's in — Start Game ⚔</Btn>
+              : <p style={{ color: c.silver, fontStyle: 'italic', fontSize: '0.9rem', textAlign: 'center', marginTop: 8 }}>
+                  Waiting for everyone to submit their nickname…
                 </p>
-              )}
-              {room.phase === 'game' && (
-                <Btn onClick={endGame} variant="ghost" style={{ flex: 1 }}>
-                  End Game / Play Again
-                </Btn>
-              )}
-            </div>
+            }
+          </>
+        )}
+
+        {/* ── GAME SCREEN (all players see this) ───────────────────────── */}
+        {screen === 'game' && room && (
+          <>
+            <Divider label="The Empire" />
+            <Card style={{ padding: '16px 20px' }}>
+              <CardTitle>⚔ Players — tap to eliminate</CardTitle>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {nonGMPlayers.map(p => {
+                  const isOut = !!room.eliminated?.[p.name]
+                  return (
+                    <div
+                      key={p.name}
+                      onClick={() => toggleEliminated(p.name)}
+                      style={{
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        padding: '11px 14px',
+                        background: isOut ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.28)',
+                        borderRadius: 4,
+                        border: `1px solid ${isOut ? 'rgba(201,168,76,0.07)' : c.border}`,
+                        cursor: 'pointer',
+                        opacity: isOut ? 0.32 : 1,
+                        transition: 'opacity 0.2s',
+                        userSelect: 'none',
+                      }}
+                    >
+                      <span style={{
+                        color: c.cream,
+                        fontSize: '1rem',
+                        textDecoration: isOut ? 'line-through' : 'none',
+                      }}>{p.name}</span>
+                      <span style={{
+                        color: c.silver,
+                        fontStyle: 'italic',
+                        fontSize: '0.95rem',
+                        textDecoration: isOut ? 'line-through' : 'none',
+                      }}>{room.nicknames?.[p.name]}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </Card>
+            {room.gm === myName && (
+              <Btn onClick={endGame} variant="ghost" fullWidth>New Game</Btn>
+            )}
           </>
         )}
 
       </div>
-
-      {/* ── Inactivity modal ───────────────────────────────────────────────── */}
-      {showInactivityModal && (
-        <div style={{
-          position: 'fixed', inset: 0,
-          background: 'rgba(0,0,0,0.75)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 1000,
-          padding: 20,
-        }}>
-          <div style={{
-            background: c.bgCard,
-            border: `1px solid ${c.border}`,
-            borderRadius: 6,
-            padding: '32px 28px',
-            maxWidth: 380,
-            width: '100%',
-            textAlign: 'center',
-            animation: 'fadeUp 0.3s ease',
-            boxShadow: '0 12px 48px rgba(0,0,0,0.7)',
-          }}>
-            <div style={{ fontSize: 36, marginBottom: 16 }}>⌛</div>
-            <div style={{
-              fontFamily: "'Cinzel', serif",
-              fontSize: '1rem',
-              letterSpacing: '0.12em',
-              color: c.gold,
-              marginBottom: 12,
-            }}>
-              Welcome Back
-            </div>
-            <p style={{ color: c.silver, fontSize: '0.95rem', lineHeight: 1.65, marginBottom: 24 }}>
-              You've been away for a while. Would you like to start a fresh session or continue where you left off?
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <Btn onClick={exitRoom} fullWidth>
-                New Session
-              </Btn>
-              <Btn onClick={() => setShowInactivityModal(false)} variant="ghost" fullWidth>
-                Continue Current Room
-              </Btn>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
