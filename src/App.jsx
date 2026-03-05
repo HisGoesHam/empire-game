@@ -213,6 +213,7 @@ export default function App() {
   const [inputNick,  setInputNick]  = useState('')
   const [error,      setError]      = useState('')
   const [loading,    setLoading]    = useState(false)
+  const [showExitPopup, setShowExitPopup] = useState(false)
   const unsubRef = useRef(null)
 
   // ── Exit room ──────────────────────────────────────────────────────────────
@@ -225,6 +226,27 @@ export default function App() {
     setRoom(null); setMyName(''); setIsGM(false)
     setInputCreateName(''); setInputJoinName(''); setInputCode(''); setInputNick('')
     setError(''); setScreen('home')
+  }
+
+  // ── Go back from Rules to wherever the player was ─────────────────────────
+  function goBack() {
+    if (!room || !myName) { setScreen('home'); return }
+    if (room.phase === 'lobby') { setScreen('lobby'); return }
+    if (room.phase === 'nicknames') {
+      if (room.gm === myName) { setScreen('gm'); return }
+      setScreen(room.nicknames?.[myName] ? 'waiting' : 'nickname')
+      return
+    }
+    if (room.phase === 'reading' || room.phase === 'game') { setScreen('game'); return }
+    setScreen('home')
+  }
+
+  // ── Go back to nickname entry (clear submission, re-open input) ────────────
+  async function goToNicknamePage() {
+    setShowExitPopup(false)
+    const nicknames = { ...(room.nicknames || {}) }
+    delete nicknames[myName]
+    await saveRoom(room.code, { ...room, nicknames })
   }
 
   // ── Real-time listener ─────────────────────────────────────────────────────
@@ -395,35 +417,35 @@ export default function App() {
 
       {/* Header */}
       <div style={{ position: 'relative', textAlign: 'center', padding: '40px 20px 10px' }}>
-        {screen === 'rules' && (
-          <button
-            onClick={() => setScreen('home')}
-            title="Back to Home"
-            style={{
-              position: 'absolute',
-              top: 20, left: 18,
-              background: 'transparent',
-              border: `1px solid ${c.border}`,
-              borderRadius: 3,
-              color: c.silver,
-              fontFamily: "'Cinzel', serif",
-              fontSize: '0.65rem',
-              letterSpacing: '0.12em',
-              textTransform: 'uppercase',
-              padding: '7px 14px',
-              cursor: 'pointer',
-              transition: 'all 0.18s',
-            }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = c.gold; e.currentTarget.style.color = c.gold }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = c.border; e.currentTarget.style.color = c.silver }}
-          >
-            ← Back
-          </button>
-        )}
+        {/* How to Play (left) — always visible; becomes ← Back on rules screen */}
+        <button
+          onClick={screen === 'rules' ? goBack : () => setScreen('rules')}
+          style={{
+            position: 'absolute',
+            top: 20, left: 18,
+            background: 'transparent',
+            border: `1px solid ${c.border}`,
+            borderRadius: 3,
+            color: c.silver,
+            fontFamily: "'Cinzel', serif",
+            fontSize: '0.65rem',
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+            padding: '7px 14px',
+            cursor: 'pointer',
+            transition: 'all 0.18s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = c.gold; e.currentTarget.style.color = c.gold }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = c.border; e.currentTarget.style.color = c.silver }}
+        >
+          {screen === 'rules' ? '← Back' : '? How to Play'}
+        </button>
+
+        {/* Exit Room (right) — visible whenever the player is in a room */}
         {screen !== 'home' && screen !== 'rules' && (
           <button
-            onClick={exitRoom}
-            title="Exit room and return to Home"
+            onClick={() => setShowExitPopup(true)}
+            title="Exit room"
             style={{
               position: 'absolute',
               top: 20, right: 18,
@@ -510,20 +532,6 @@ export default function App() {
               </div>
             </Card>
 
-            <div style={{ textAlign: 'center', marginTop: 4 }}>
-              <button
-                onClick={() => setScreen('rules')}
-                style={{
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  color: c.silver, fontFamily: "'Cinzel', serif",
-                  fontSize: '0.7rem', letterSpacing: '0.14em',
-                  textTransform: 'uppercase', textDecoration: 'underline',
-                  textDecorationColor: c.goldDim, padding: '6px 0',
-                }}
-              >
-                How to Play
-              </button>
-            </div>
           </>
         )}
 
@@ -537,9 +545,9 @@ export default function App() {
                 {[
                   { n: '1', text: 'One player creates a room and becomes the Gamemaster (GM). The GM shares the room code with everyone else.' },
                   { n: '2', text: 'All other players join using the room code and enter their real name.' },
-                  { n: '3', text: 'Once everyone has joined, the GM starts the game. Each player secretly submits a nickname for themselves.' },
-                  { n: '4', text: 'Only the GM can see which real name belongs to which nickname. Players must figure out who is who.' },
-                  { n: '5', text: 'Players are eliminated as the game progresses. The GM marks eliminations on their screen and all players see who is still in.' },
+                  { n: '3', text: 'The GM starts the game. Each player secretly submits a nickname for themselves. Only the GM can see who submitted which nickname.' },
+                  { n: '4', text: 'Players take turns guessing one at a time. Name another player and guess their nickname. Guess correctly — that player joins your empire and you keep guessing. Guess wrong — play passes to the next person.' },
+                  { n: '5', text: 'The game ends when only two players remain. The player with the largest empire wins!' },
                 ].map(({ n, text }) => (
                   <div key={n} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
                     <div style={{
@@ -721,21 +729,21 @@ export default function App() {
           <>
             <Divider label="The Empire" />
             <Card style={{ padding: '16px 20px' }}>
-              <CardTitle>⚔ Players — tap to eliminate</CardTitle>
+              <CardTitle>{isGM ? '⚔ Players — tap to eliminate' : '⚔ Players'}</CardTitle>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {nonGMPlayers.map(p => {
                   const isOut = !!room.eliminated?.[p.name]
                   return (
                     <div
                       key={p.name}
-                      onClick={() => toggleEliminated(p.name)}
+                      onClick={isGM ? () => toggleEliminated(p.name) : undefined}
                       style={{
                         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                         padding: '11px 14px',
                         background: isOut ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.28)',
                         borderRadius: 4,
                         border: `1px solid ${isOut ? 'rgba(201,168,76,0.07)' : c.border}`,
-                        cursor: 'pointer',
+                        cursor: isGM ? 'pointer' : 'default',
                         opacity: isOut ? 0.32 : 1,
                         transition: 'opacity 0.2s',
                         userSelect: 'none',
@@ -764,6 +772,54 @@ export default function App() {
         )}
 
       </div>
+
+      {/* ── EXIT POPUP ────────────────────────────────────────────────── */}
+      {showExitPopup && (
+        <div style={{
+          position: 'fixed', inset: 0,
+          background: 'rgba(0,0,0,0.78)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 100,
+          padding: '0 18px',
+        }}>
+          <div style={{
+            background: c.bgCard,
+            border: `1px solid ${c.border}`,
+            borderRadius: 6,
+            padding: '28px 24px',
+            maxWidth: 340,
+            width: '100%',
+            boxShadow: '0 12px 48px rgba(0,0,0,0.7)',
+            animation: 'fadeUp 0.2s ease',
+          }}>
+            <div style={{
+              fontFamily: "'Cinzel', serif",
+              color: c.gold,
+              fontSize: '0.85rem',
+              letterSpacing: '0.14em',
+              textTransform: 'uppercase',
+              textAlign: 'center',
+              marginBottom: 10,
+            }}>Leave the Game?</div>
+            <p style={{ color: c.silver, fontSize: '0.9rem', lineHeight: 1.6, textAlign: 'center', marginBottom: 22 }}>
+              What would you like to do?
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {!isGM && room?.phase === 'nicknames' && (
+                <Btn onClick={goToNicknamePage} fullWidth>
+                  Return to Nickname Page
+                </Btn>
+              )}
+              <Btn onClick={() => { setShowExitPopup(false); exitRoom() }} variant="crimson" fullWidth>
+                Return to Home Screen
+              </Btn>
+              <Btn onClick={() => setShowExitPopup(false)} variant="ghost" fullWidth>
+                Cancel — Stay in Game
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
