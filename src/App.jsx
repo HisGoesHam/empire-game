@@ -215,6 +215,18 @@ export default function App() {
   const [loading,    setLoading]    = useState(false)
   const unsubRef = useRef(null)
 
+  // ── Exit room ──────────────────────────────────────────────────────────────
+  function exitRoom() {
+    if (unsubRef.current) { unsubRef.current(); unsubRef.current = null }
+    localStorage.removeItem('empire_code')
+    localStorage.removeItem('empire_name')
+    localStorage.removeItem('empire_isGM')
+    localStorage.removeItem('empire_lastActive')
+    setRoom(null); setMyName(''); setIsGM(false)
+    setInputCreateName(''); setInputJoinName(''); setInputCode(''); setInputNick('')
+    setError(''); setScreen('home')
+  }
+
   // ── Real-time listener ─────────────────────────────────────────────────────
   function subscribeToRoom(code) {
     if (unsubRef.current) unsubRef.current()
@@ -391,7 +403,32 @@ export default function App() {
       <GlobalStyle />
 
       {/* Header */}
-      <div style={{ textAlign: 'center', padding: '40px 20px 10px' }}>
+      <div style={{ position: 'relative', textAlign: 'center', padding: '40px 20px 10px' }}>
+        {screen !== 'home' && (
+          <button
+            onClick={exitRoom}
+            title="Exit room and return to Home"
+            style={{
+              position: 'absolute',
+              top: 20, right: 18,
+              background: 'transparent',
+              border: `1px solid ${c.border}`,
+              borderRadius: 3,
+              color: c.silver,
+              fontFamily: "'Cinzel', serif",
+              fontSize: '0.65rem',
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              padding: '7px 14px',
+              cursor: 'pointer',
+              transition: 'all 0.18s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = c.gold; e.currentTarget.style.color = c.gold }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = c.border; e.currentTarget.style.color = c.silver }}
+          >
+            ✕ Exit Room
+          </button>
+        )}
         <div style={{ fontSize: 44, animation: 'crownFloat 3s ease-in-out infinite' }}>♛</div>
         <div style={{
           fontFamily: "'Cinzel', serif",
@@ -574,24 +611,33 @@ export default function App() {
           </>
         )}
 
-        {/* ── GM SCREEN (nickname collection phase only) ───────────────── */}
+        {/* ── GM SCREEN (nickname collection phase) ────────────────────── */}
         {screen === 'gm' && room && (
           <>
             <Divider label="Collecting Nicknames" />
-            <Card>
-              <CardTitle>⚜ Submission Progress</CardTitle>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <Card style={{ padding: '16px 20px' }}>
+              <CardTitle>📜 Players & Nicknames — only you see this</CardTitle>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {nonGMPlayers.map(p => {
-                  const done = !!room.nicknames?.[p.name]
+                  const nick = room.nicknames?.[p.name]
                   return (
                     <div key={p.name} style={{
-                      padding: '6px 14px', borderRadius: 3,
-                      border: `1px solid ${done ? c.greenBrd : c.border}`,
-                      background: done ? c.green : 'transparent',
-                      fontSize: '0.9rem',
-                      color: done ? '#90ee90' : c.silver,
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '10px 14px',
+                      background: nick ? 'rgba(80,200,100,0.07)' : 'rgba(0,0,0,0.25)',
+                      borderRadius: 4,
+                      border: `1px solid ${nick ? c.greenBrd : c.border}`,
+                      transition: 'all 0.25s',
                     }}>
-                      {done ? '✓' : '○'} {p.name}
+                      <span style={{ color: c.cream, fontSize: '1rem' }}>{p.name}</span>
+                      <span style={{
+                        color: nick ? '#90ee90' : c.silver,
+                        fontStyle: 'italic',
+                        fontSize: '0.95rem',
+                        opacity: nick ? 1 : 0.4,
+                      }}>
+                        {nick || '…'}
+                      </span>
                     </div>
                   )
                 })}
