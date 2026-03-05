@@ -198,6 +198,7 @@ function makeRoom(code, gmName) {
     players: [{ name: gmName, isGM: true }],
     nicknames: {},
     eliminated: {},
+    rereadVotes: {},
   }
 }
 
@@ -393,6 +394,16 @@ export default function App() {
     await saveRoom(room.code, { ...room, eliminated })
   }
 
+  async function toggleRereadVote() {
+    const rereadVotes = { ...(room.rereadVotes || {}) }
+    if (rereadVotes[myName]) { delete rereadVotes[myName] } else { rereadVotes[myName] = true }
+    await saveRoom(room.code, { ...room, rereadVotes })
+  }
+
+  async function clearRereadVotes() {
+    await saveRoom(room.code, { ...room, rereadVotes: {} })
+  }
+
   async function endGame() {
     const fresh = makeRoom(room.code, room.gm)
     fresh.players = room.players
@@ -402,6 +413,10 @@ export default function App() {
   const nonGMPlayers = (room?.players || []).filter(p => p.name !== room?.gm)
   const allSubmitted = nonGMPlayers.length > 0 &&
     nonGMPlayers.every(p => room.nicknames?.[p.name])
+  const livingNonGMPlayers = nonGMPlayers.filter(p => !room?.eliminated?.[p.name])
+  const rereadRequested = livingNonGMPlayers.length > 0 &&
+    livingNonGMPlayers.every(p => room?.rereadVotes?.[p.name])
+  const myRereadVote = !!room?.rereadVotes?.[myName]
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -545,9 +560,10 @@ export default function App() {
                 {[
                   { n: '1', text: 'One player creates a room and becomes the Gamemaster (GM). The GM shares the room code with everyone else.' },
                   { n: '2', text: 'All other players join using the room code and enter their real name.' },
-                  { n: '3', text: 'The GM starts the game. Each player secretly submits a nickname for themselves. Only the GM can see who submitted which nickname.' },
+                  { n: '3', text: 'The GM starts the game. Each player secretly submits a nickname for themselves. Only the GM can see who submitted which nickname. The GM then reads all the nicknames aloud — twice — so everyone can try to memorize them.' },
                   { n: '4', text: 'Players take turns guessing one at a time. Name another player and guess their nickname. Guess correctly — that player joins your empire and you keep guessing. Guess wrong — play passes to the next person.' },
-                  { n: '5', text: 'The game ends when only two players remain. The player with the largest empire wins!' },
+                  { n: '5', text: 'At any point, all surviving players can unanimously request the GM to read the remaining nicknames one more time. Tap "Request Re-read" in the app — once every surviving player has voted, the GM reads them once.' },
+                  { n: '6', text: 'The game ends when only two players remain. The player with the largest empire wins!' },
                 ].map(({ n, text }) => (
                   <div key={n} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
                     <div style={{
@@ -728,6 +744,33 @@ export default function App() {
         {screen === 'game' && room && (
           <>
             <Divider label="The Empire" />
+
+            {/* Re-read requested banner */}
+            {rereadRequested && (
+              <div style={{
+                background: 'rgba(201,168,76,0.1)',
+                border: `1px solid ${c.gold}`,
+                borderRadius: 4,
+                padding: '14px 18px',
+                marginBottom: 14,
+                textAlign: 'center',
+              }}>
+                <div style={{ fontFamily: "'Cinzel', serif", color: c.gold, fontSize: '0.8rem', letterSpacing: '0.12em', marginBottom: 6 }}>
+                  📣 Re-read Requested
+                </div>
+                <p style={{ color: c.cream, fontSize: '0.9rem', lineHeight: 1.5, margin: 0 }}>
+                  {isGM
+                    ? 'All surviving players want you to read the remaining nicknames aloud.'
+                    : 'Everyone has voted — waiting for the GM to read the nicknames.'}
+                </p>
+                {isGM && (
+                  <div style={{ marginTop: 12 }}>
+                    <Btn onClick={clearRereadVotes} style={{ fontSize: '0.68rem' }}>Done Reading ✓</Btn>
+                  </div>
+                )}
+              </div>
+            )}
+
             <Card style={{ padding: '16px 20px' }}>
               <CardTitle>{isGM ? '⚔ Players — tap to eliminate' : '⚔ Players'}</CardTitle>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -759,13 +802,41 @@ export default function App() {
                         fontStyle: 'italic',
                         fontSize: '0.95rem',
                         textDecoration: isOut ? 'line-through' : 'none',
-                      }}>{room.gm === myName ? room.nicknames?.[p.name] : null}</span>
+                      }}>{isGM ? room.nicknames?.[p.name] : null}</span>
                     </div>
                   )
                 })}
               </div>
             </Card>
-            {room.gm === myName && (
+
+            {/* Re-read vote button for living non-GM players */}
+            {!isGM && !room.eliminated?.[myName] && (
+              <button
+                onClick={toggleRereadVote}
+                style={{
+                  width: '100%',
+                  background: myRereadVote ? 'rgba(201,168,76,0.12)' : 'transparent',
+                  border: `1px solid ${myRereadVote ? c.gold : c.border}`,
+                  borderRadius: 3,
+                  color: myRereadVote ? c.gold : c.silver,
+                  fontFamily: "'Cinzel', serif",
+                  fontSize: '0.68rem',
+                  letterSpacing: '0.13em',
+                  textTransform: 'uppercase',
+                  padding: '11px',
+                  cursor: 'pointer',
+                  transition: 'all 0.18s',
+                  marginBottom: 10,
+                }}
+              >
+                {myRereadVote ? '✓ Re-read Requested' : 'Request Re-read'}
+                <span style={{ color: c.silver, marginLeft: 8, fontSize: '0.65rem' }}>
+                  ({livingNonGMPlayers.filter(p => room.rereadVotes?.[p.name]).length}/{livingNonGMPlayers.length} agree)
+                </span>
+              </button>
+            )}
+
+            {isGM && (
               <Btn onClick={endGame} variant="ghost" fullWidth>New Game</Btn>
             )}
           </>
