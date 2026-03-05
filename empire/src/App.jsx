@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import { ref, set, onValue, off } from 'firebase/database'
 import { db } from './firebase.js'
 
+const STALE_MS = 30 * 60 * 1000 // 30 min — saved session treated as stale
+
 // ── Google Fonts ──────────────────────────────────────────────────────────────
 const GlobalStyle = () => (
   <style>{`
@@ -205,8 +207,9 @@ export default function App() {
   const [room,       setRoom]       = useState(null)
   const [myName, setMyName] = useState(() => localStorage.getItem('empire_name') || '')
   const [isGM,   setIsGM]   = useState(() => localStorage.getItem('empire_isGM') === 'true')
-  const [inputName,  setInputName]  = useState('')
-  const [inputCode,  setInputCode]  = useState('')
+  const [inputCreateName, setInputCreateName] = useState('')
+  const [inputJoinName,   setInputJoinName]   = useState('')
+  const [inputCode,       setInputCode]       = useState('')
   const [inputNick,  setInputNick]  = useState('')
   const [error,      setError]      = useState('')
   const [loading,    setLoading]    = useState(false)
@@ -224,11 +227,42 @@ export default function App() {
   }
 
   useEffect(() => () => unsubRef.current?.(), [])
+
+  // ── Restore session only if recent; otherwise start fresh ─────────────────
   useEffect(() => {
-  const savedCode = localStorage.getItem('empire_code')
-  const savedName = localStorage.getItem('empire_name')
-  if (savedCode && savedName) subscribeToRoom(savedCode)
-}, [])
+    const savedCode     = localStorage.getItem('empire_code')
+    const savedName     = localStorage.getItem('empire_name')
+    const lastActive    = localStorage.getItem('empire_lastActive')
+    const isStale       = !lastActive || (Date.now() - Number(lastActive)) > STALE_MS
+
+    if (savedCode && savedName && !isStale) {
+      subscribeToRoom(savedCode)
+    } else {
+      localStorage.removeItem('empire_code')
+      localStorage.removeItem('empire_name')
+      localStorage.removeItem('empire_isGM')
+      localStorage.removeItem('empire_lastActive')
+    }
+  }, [])
+
+  // ── Reset to home when user returns to tab after being away too long ───────
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.hidden) return
+      const lastActive = localStorage.getItem('empire_lastActive')
+      const isStale    = !lastActive || (Date.now() - Number(lastActive)) > STALE_MS
+      if (isStale) {
+        localStorage.removeItem('empire_code')
+        localStorage.removeItem('empire_name')
+        localStorage.removeItem('empire_isGM')
+        localStorage.removeItem('empire_lastActive')
+        if (unsubRef.current) { unsubRef.current(); unsubRef.current = null }
+        setRoom(null); setMyName(''); setIsGM(false); setScreen('home')
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [])
 
 
   // ── Derive screen from room state ──────────────────────────────────────────
@@ -246,8 +280,18 @@ export default function App() {
   }, [room, myName, isGM])
 
   // ── Actions ────────────────────────────────────────────────────────────────
+  // ── Keep lastActive fresh while user is in a room ─────────────────────────
+  useEffect(() => {
+    if (screen === 'home') return
+    localStorage.setItem('empire_lastActive', Date.now().toString())
+    const id = setInterval(() => {
+      localStorage.setItem('empire_lastActive', Date.now().toString())
+    }, 60_000)
+    return () => clearInterval(id)
+  }, [screen])
+
   async function createRoom() {
-    const name = inputName.trim()
+    const name = inputCreateName.trim()
     if (!name) { setError('Enter your name'); return }
     setLoading(true); setError('')
     const code = genCode()
@@ -258,12 +302,13 @@ export default function App() {
     localStorage.setItem('empire_name', name)
     localStorage.setItem('empire_code', code)
     localStorage.setItem('empire_isGM', 'true')
+    localStorage.setItem('empire_lastActive', Date.now().toString())
     subscribeToRoom(code)
     setLoading(false)
   }
 
   async function joinRoom() {
-    const name = inputName.trim()
+    const name = inputJoinName.trim()
     const code = inputCode.trim().toUpperCase()
     if (!name || !code) { setError('Enter your name and a room code'); return }
     setLoading(true); setError('')
@@ -287,6 +332,7 @@ export default function App() {
     localStorage.setItem('empire_name', name)
     localStorage.setItem('empire_code', code)
     localStorage.setItem('empire_isGM', 'false')
+    localStorage.setItem('empire_lastActive', Date.now().toString())
     subscribeToRoom(code)
     setLoading(false)
   }
@@ -376,7 +422,7 @@ export default function App() {
                 You'll be the Gamemaster. A room code will be generated to share with your players.
               </p>
               <Input
-                value={inputName} onChange={setInputName}
+                value={inputCreateName} onChange={setInputCreateName}
                 placeholder="Your name…"
                 onKeyDown={e => e.key === 'Enter' && createRoom()}
               />
@@ -394,7 +440,7 @@ export default function App() {
                 Enter the code your Gamemaster shared.
               </p>
               <div style={{ marginBottom: 10 }}>
-                <Input value={inputName} onChange={setInputName} placeholder="Your name…" />
+                <Input value={inputJoinName} onChange={setInputJoinName} placeholder="Your name…" />
               </div>
               <Input
                 value={inputCode}
