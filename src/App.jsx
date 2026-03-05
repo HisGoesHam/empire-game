@@ -395,7 +395,32 @@ export default function App() {
 
       {/* Header */}
       <div style={{ position: 'relative', textAlign: 'center', padding: '40px 20px 10px' }}>
-        {screen !== 'home' && (
+        {screen === 'rules' && (
+          <button
+            onClick={() => setScreen('home')}
+            title="Back to Home"
+            style={{
+              position: 'absolute',
+              top: 20, left: 18,
+              background: 'transparent',
+              border: `1px solid ${c.border}`,
+              borderRadius: 3,
+              color: c.silver,
+              fontFamily: "'Cinzel', serif",
+              fontSize: '0.65rem',
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              padding: '7px 14px',
+              cursor: 'pointer',
+              transition: 'all 0.18s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = c.gold; e.currentTarget.style.color = c.gold }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = c.border; e.currentTarget.style.color = c.silver }}
+          >
+            ← Back
+          </button>
+        )}
+        {screen !== 'home' && screen !== 'rules' && (
           <button
             onClick={exitRoom}
             title="Exit room and return to Home"
@@ -482,6 +507,54 @@ export default function App() {
                 <Btn onClick={joinRoom} disabled={loading} variant="ghost" fullWidth>
                   {loading ? <><Spinner />Joining…</> : 'Join Room'}
                 </Btn>
+              </div>
+            </Card>
+
+            <div style={{ textAlign: 'center', marginTop: 4 }}>
+              <button
+                onClick={() => setScreen('rules')}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: c.silver, fontFamily: "'Cinzel', serif",
+                  fontSize: '0.7rem', letterSpacing: '0.14em',
+                  textTransform: 'uppercase', textDecoration: 'underline',
+                  textDecorationColor: c.goldDim, padding: '6px 0',
+                }}
+              >
+                How to Play
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ── RULES ────────────────────────────────────────────────────── */}
+        {screen === 'rules' && (
+          <>
+            <Divider label="How to Play" />
+            <Card>
+              <CardTitle>📜 The Rules</CardTitle>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                {[
+                  { n: '1', text: 'One player creates a room and becomes the Gamemaster (GM). The GM shares the room code with everyone else.' },
+                  { n: '2', text: 'All other players join using the room code and enter their real name.' },
+                  { n: '3', text: 'Once everyone has joined, the GM starts the game. Each player secretly submits a nickname for themselves.' },
+                  { n: '4', text: 'Only the GM can see which real name belongs to which nickname. Players must figure out who is who.' },
+                  { n: '5', text: 'Players are eliminated as the game progresses. The GM marks eliminations on their screen and all players see who is still in.' },
+                ].map(({ n, text }) => (
+                  <div key={n} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+                    <div style={{
+                      flexShrink: 0,
+                      width: 26, height: 26,
+                      borderRadius: '50%',
+                      border: `1px solid ${c.goldDim}`,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontFamily: "'Cinzel', serif",
+                      fontSize: '0.7rem',
+                      color: c.gold,
+                    }}>{n}</div>
+                    <p style={{ color: c.cream, fontSize: '0.97rem', lineHeight: 1.65, margin: 0 }}>{text}</p>
+                  </div>
+                ))}
               </div>
             </Card>
           </>
