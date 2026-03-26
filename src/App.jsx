@@ -190,6 +190,34 @@ const CopyCodeBtn = ({ code }) => {
   )
 }
 
+const CopyLinkBtn = ({ code }) => {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    const url = `${window.location.origin}${window.location.pathname}?room=${code}`
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+  return (
+    <button onClick={copy} style={{
+      background: 'transparent',
+      border: `1px solid ${copied ? c.greenBrd : c.border}`,
+      borderRadius: 3,
+      color: copied ? '#90ee90' : c.silver,
+      fontFamily: "'Cinzel', serif",
+      fontSize: '0.65rem',
+      letterSpacing: '0.12em',
+      textTransform: 'uppercase',
+      padding: '6px 16px',
+      cursor: 'pointer',
+      transition: 'all 0.18s',
+    }}>
+      {copied ? '✓ Copied!' : '🔗 Copy Link'}
+    </button>
+  )
+}
+
 const Spinner = () => (
   <span style={{
     display: 'inline-block',
@@ -301,6 +329,10 @@ export default function App() {
     localStorage.removeItem('empire_name')
     localStorage.removeItem('empire_isGM')
     localStorage.removeItem('empire_lastActive')
+    // Pre-fill join code from ?room= URL param
+    const params = new URLSearchParams(window.location.search)
+    const roomParam = params.get('room')
+    if (roomParam) setInputCode(roomParam.toUpperCase().slice(0, 5))
   }, [])
 
   // ── Reset to home when user returns to tab after being away too long ───────
@@ -679,8 +711,9 @@ export default function App() {
               <p style={{ color: c.silver, fontSize: '0.88rem', textAlign: 'center', fontStyle: 'italic' }}>
                 Everyone opens this same page and taps "Join a Room"
               </p>
-              <div style={{ textAlign: 'center', marginTop: 10 }}>
+              <div style={{ textAlign: 'center', marginTop: 10, display: 'flex', justifyContent: 'center', gap: 10 }}>
                 <CopyCodeBtn code={room.code} />
+                <CopyLinkBtn code={room.code} />
               </div>
             </Card>
 
